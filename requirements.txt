@@ -6,3 +6,4 @@ numpy
 ta
 requests
 beautifulsoup4
+textblob
