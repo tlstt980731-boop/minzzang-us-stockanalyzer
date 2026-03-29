@@ -4,6 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+import numpy as np
+import time
 
 # 1. 페이지 기본 설정
 st.set_page_config(page_title="미주 분석기 (민짱 Pro)", layout="wide", initial_sidebar_state="expanded")
@@ -31,6 +33,17 @@ def predict_5d_return(current_price, hist, current_rsi):
     if current_rsi < 40: return abs(past_5d) * 0.4 + 2.5
     elif current_rsi > 70: return -abs(past_5d) * 0.4 - 2.0
     else: return past_5d * 0.3
+
+# 안전한 데이터 수집 엔진 (절대 안 뻗음)
+def get_safe_history(ticker_symbol, period="3mo"):
+    try:
+        tkr = yf.Ticker(ticker_symbol)
+        df = tkr.history(period=period)
+        if df is not None and not df.empty and len(df) > 5:
+            return df
+        return None
+    except:
+        return None
 
 # 한글 검색 만능 사전
 ticker_map = {
@@ -61,7 +74,7 @@ menu = st.sidebar.radio(
 # 메뉴 0: 메인 홈 (대시보드)
 # ==========================================
 if menu == "🏠 0. 메인 홈 (대시보드)":
-    st.title("환영합니다! 📈 미주 분석기 (민짱 Pro Ver 12.0 초고속 패치)")
+    st.title("환영합니다! 📈 미주 분석기 (민짱 Pro Ver 12.1)")
     st.markdown("여의도/월스트리트 전문가 수준의 심층 데이터와 AI 예측을 무료로 경험해 보세요.")
     st.markdown("---")
     
@@ -69,17 +82,20 @@ if menu == "🏠 0. 메인 홈 (대시보드)":
     with st.spinner('실시간 시장 데이터를 불러오는 중...'):
         c_m1, c_m2, c_m3 = st.columns(3)
         try:
-            ndx = yf.Ticker("^IXIC").history(period="5d")
-            n_p, n_prev = ndx['Close'].iloc[-1], ndx['Close'].iloc[-2]
-            c_m1.metric("NASDAQ (나스닥 종합)", f"{n_p:,.2f}", f"{n_p - n_prev:,.2f} ({(n_p - n_prev)/n_prev*100:.2f}%)")
+            ndx = get_safe_history("^IXIC", "5d")
+            if ndx is not None:
+                n_p, n_prev = ndx['Close'].iloc[-1], ndx['Close'].iloc[-2]
+                c_m1.metric("NASDAQ (나스닥 종합)", f"{n_p:,.2f}", f"{n_p - n_prev:,.2f} ({(n_p - n_prev)/n_prev*100:.2f}%)")
             
-            spx = yf.Ticker("^GSPC").history(period="5d")
-            s_p, s_prev = spx['Close'].iloc[-1], spx['Close'].iloc[-2]
-            c_m2.metric("S&P 500", f"{s_p:,.2f}", f"{s_p - s_prev:,.2f} ({(s_p - s_prev)/s_prev*100:.2f}%)")
+            spx = get_safe_history("^GSPC", "5d")
+            if spx is not None:
+                s_p, s_prev = spx['Close'].iloc[-1], spx['Close'].iloc[-2]
+                c_m2.metric("S&P 500", f"{s_p:,.2f}", f"{s_p - s_prev:,.2f} ({(s_p - s_prev)/s_prev*100:.2f}%)")
             
-            krw = yf.Ticker("USDKRW=X").history(period="5d")
-            k_p, k_prev = krw['Close'].iloc[-1], krw['Close'].iloc[-2]
-            c_m3.metric("원/달러 환율 (KRW/USD)", f"{k_p:,.2f} 원", f"{k_p - k_prev:,.2f} 원")
+            krw = get_safe_history("USDKRW=X", "5d")
+            if krw is not None:
+                k_p, k_prev = krw['Close'].iloc[-1], krw['Close'].iloc[-2]
+                c_m3.metric("원/달러 환율 (KRW/USD)", f"{k_p:,.2f} 원", f"{k_p - k_prev:,.2f} 원")
         except:
             st.error("시장 데이터를 불러오는 데 실패했습니다.")
     
@@ -100,10 +116,10 @@ elif menu == "🔍 1. 종목 분석 & 7대 리포트":
         try:
             with st.spinner(f'{ticker_symbol} 데이터 영혼까지 끌어오는 중...'):
                 ticker = yf.Ticker(ticker_symbol)
-                hist = ticker.history(period="1y")
+                hist = get_safe_history(ticker_symbol, "1y")
                 info = ticker.info
                 
-                if hist.empty:
+                if hist is None:
                     st.warning(f"'{user_input}' 데이터를 찾을 수 없습니다. 티커를 확인해 주세요.")
                 else:
                     current_price = hist['Close'].iloc[-1]
@@ -180,121 +196,126 @@ elif menu == "🔍 1. 종목 분석 & 7대 리포트":
             st.error("데이터 오류 발생. 잠시 후 다시 시도해 주세요.")
 
 # ==========================================
-# 메뉴 2: 테마별 종목 (초고속 일괄 다운로드 엔진 장착)
+# 메뉴 2: 테마별 종목 (네가 요청한 방산, 바이오, 전기차 등 대폭 추가!)
 # ==========================================
 elif menu == "🚀 2. 테마별 종목 모아보기":
     st.subheader("🚀 테마별 관련주 비교하기")
+    
+    # 테마 대폭 확장!!
     themes = {
-        "🛰️ 우주/항공": ["ASTS", "RKLB", "LUNR", "SPCE"], 
-        "🧠 AI / 반도체": ["NVDA", "AMD", "TSM", "PLTR"], 
-        "⚡ 빅테크 (M7)": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"]
+        "🛰️ 우주/항공": ["ASTS", "RKLB", "LUNR", "SPCE", "BA", "LMT"], 
+        "🧠 AI / 반도체": ["NVDA", "AMD", "TSM", "AVGO", "ASML", "PLTR", "ARM", "MU"], 
+        "⚡ 빅테크 (M7)": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA"],
+        "🛡️ 방산 / 밀리터리": ["LMT", "RTX", "NOC", "GD", "PLTR"],
+        "🧬 바이오 / 제약": ["LLY", "NVO", "JNJ", "PFE", "MRK", "VRTX"],
+        "🔋 전기차 / 2차전지": ["TSLA", "RIVN", "LCID", "ALB", "SQM"],
+        "🤖 로봇 / 자동화": ["PATH", "ISRG", "TER", "ROK", "SYK"],
+        "🪙 가상화폐 / 블록체인": ["MSTR", "COIN", "MARA", "RIOT", "HOOD"]
     }
-    selected_theme = st.selectbox("테마 선택:", list(themes.keys()))
+    
+    selected_theme = st.selectbox("어떤 테마를 훑어볼까요?", list(themes.keys()))
     tickers = themes[selected_theme]
     
     if st.button("🚀 스캔 시작"):
-        my_bar = st.progress(10, text="야후 서버에서 테마주 데이터 한 번에 끌어오는 중...")
-        try:
-            # 하나씩 안 가져오고 뭉탱이로 한방에 가져옴 (안 멈추고 초고속!)
-            data = yf.download(tickers, period="5d", progress=False)
-            closes = data['Close']
-            res_data = []
+        my_bar = st.progress(0, text="데이터 수집 중...")
+        data = []
+        
+        for i, t in enumerate(tickers):
+            try:
+                h = get_safe_history(t, "5d")
+                if h is not None:
+                    p = float(h['Close'].iloc[-1])
+                    prev_p = float(h['Close'].iloc[-2])
+                    chg = (p - prev_p) / prev_p * 100
+                    data.append({"종목": t, "현재가($)": round(p, 2), "변동률(%)": round(chg, 2)})
+            except: 
+                pass
             
-            for i, t in enumerate(tickers):
-                if t in closes.columns:
-                    s = closes[t].dropna()
-                    if len(s) >= 2:
-                        p = s.iloc[-1]
-                        prev_p = s.iloc[-2]
-                        chg = (p - prev_p) / prev_p * 100
-                        res_data.append({"종목": t, "현재가($)": round(p, 2), "변동률(%)": round(chg, 2)})
-                
-                my_bar.progress(50 + int(((i + 1) / len(tickers)) * 50), text=f"🔍 {t} 분석 완료!")
-                
-            if res_data:
-                st.dataframe(pd.DataFrame(res_data).style.applymap(lambda x: f"color: {'#ff4b4b' if x>0 else '#0068c9'}", subset=['변동률(%)']), use_container_width=True)
-            else:
-                st.error("데이터를 가져오지 못했습니다.")
-        except Exception as e:
-            st.error("스캔 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.")
+            my_bar.progress(int(((i + 1) / len(tickers)) * 100), text=f"🔍 {t} 스캔 완료! ({i+1}/{len(tickers)})")
+            time.sleep(0.1) # 안전장치
+            
+        if data:
+            st.dataframe(pd.DataFrame(data).style.applymap(lambda x: f"color: {'#ff4b4b' if x>0 else '#0068c9'}", subset=['변동률(%)']), use_container_width=True)
+        else:
+            st.error("데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.")
 
 # ==========================================
-# 메뉴 3: 급등주 탐지 (초고속 일괄 다운로드 엔진 장착)
+# 메뉴 3: 급등주 탐지 (절대 안 뻗는 엔진 장착)
 # ==========================================
 elif menu == "🔥 3. 급등주 탐지기":
     st.subheader("🔥 실시간 급등주 스캐너")
-    if st.button("🚀 스캔 시작 (초고속 버전)"):
-        hot_tickers = ["TSLA", "NVDA", "ASTS", "MSTR", "PLTR", "SOXL", "TQQQ", "COIN", "MARA"]
-        my_bar = st.progress(10, text="미국 증시 데이터 일괄 다운로드 중 (차단 방지 패치)...")
+    if st.button("🚀 스캔 시작 (약 5~10초 소요)"):
+        hot_tickers = ["TSLA", "NVDA", "ASTS", "MSTR", "PLTR", "SOXL", "TQQQ", "COIN", "MARA", "LUNR", "RKLB", "HOOD"]
+        my_bar = st.progress(0, text="미국 증시 전역을 스캔 중입니다...")
+        res = []
         
-        try:
-            data = yf.download(hot_tickers, period="1mo", progress=False)
-            closes = data['Close']
-            res = []
+        for i, t in enumerate(hot_tickers):
+            try:
+                # 3mo로 넉넉하게 가져와서 RSI 계산 에러 원천 차단
+                h = get_safe_history(t, "3mo")
+                if h is not None and len(h) > 20:
+                    p = float(h['Close'].iloc[-1])
+                    prev_p = float(h['Close'].iloc[-2])
+                    chg = (p - prev_p) / prev_p * 100
+                    rsi = float(calculate_rsi(h).iloc[-1])
+                    res.append({"t": t, "p": p, "chg": chg, "rsi": rsi})
+            except: 
+                pass
             
-            for i, t in enumerate(hot_tickers):
-                if t in closes.columns:
-                    s = closes[t].dropna()
-                    if len(s) > 20:
-                        p = float(s.iloc[-1])
-                        prev_p = float(s.iloc[-2])
-                        chg = (p - prev_p) / prev_p * 100
-                        
-                        temp_df = pd.DataFrame({'Close': s})
-                        rsi = float(calculate_rsi(temp_df).iloc[-1])
-                        res.append({"t": t, "p": p, "chg": chg, "rsi": rsi})
+            my_bar.progress(int(((i + 1) / len(hot_tickers)) * 100), text=f"🔍 {t} 변동성 분석 중... ({i+1}/{len(hot_tickers)})")
+            time.sleep(0.1)
+            
+        if res:
+            st.success("✅ 스캔 완료! 가장 핫한 종목을 찾았습니다.")
+            top_gainers = sorted(res, key=lambda x: x['chg'], reverse=True)[:3]
+            for i, s in enumerate(top_gainers):
+                st.markdown(f"### 🥇 {i+1}위: {s['t']} (+{s['chg']:.2f}%)")
+                st.write(f"현재가: ${s['p']:,.2f} | RSI: {s['rsi']:.1f}")
                 
-                my_bar.progress(50 + int(((i + 1) / len(hot_tickers)) * 50), text=f"🔍 {t} 변동성 분석 중...")
-                
-            if res:
-                st.success("✅ 스캔 완료! 가장 변동성이 큰 종목을 찾았습니다.")
-                top_gainers = sorted(res, key=lambda x: x['chg'], reverse=True)[:3]
-                for i, s in enumerate(top_gainers):
-                    st.markdown(f"### 🥇 {i+1}위: {s['t']} (+{s['chg']:.2f}%)")
-                    st.write(f"현재가: ${s['p']:,.2f} | RSI: {s['rsi']:.1f}")
-                    st.markdown("---")
-            else:
-                st.error("스캔에 실패했습니다.")
-        except Exception as e:
-            st.error("서버 차단으로 데이터를 가져오지 못했습니다. 잠시 후 시도해주세요.")
+                # 진입 타당성 분석 추가
+                if s['rsi'] > 75:
+                    st.error("❌ 너무 급하게 올랐습니다. 단기 고점일 수 있으니 진입을 보류하세요.")
+                elif s['rsi'] > 60:
+                    st.warning("⚠️ 추세는 좋지만 꽤 올랐습니다. 단기 스윙만 추천합니다.")
+                else:
+                    st.success("✅ 아직 과열되지 않았습니다. 분할 매수 접근이 유효합니다.")
+                st.markdown("---")
+        else:
+            st.error("스캔에 실패했습니다. 야후 서버 연결 상태를 확인해주세요.")
 
 # ==========================================
-# 메뉴 4: AI 5일 수익률 (초고속 일괄 다운로드 엔진 장착)
+# 메뉴 4: AI 5일 수익률 (절대 안 뻗는 엔진 장착)
 # ==========================================
 elif menu == "🏆 4. AI 5일 수익률 랭킹":
     st.subheader("🏆 AI 5일 후 예상 수익률 랭킹")
     if st.button("🔮 전 종목 AI 예측 스캔"):
-        scan_list = ["TSLA", "AAPL", "NVDA", "MSFT", "GOOGL", "AMZN", "META", "AMD", "PLTR", "ASTS", "SOXL", "TQQQ", "MSTR"]
-        my_bar = st.progress(10, text="AI 스캔용 빅데이터 일괄 다운로드 중...")
+        scan_list = ["TSLA", "AAPL", "NVDA", "MSFT", "GOOGL", "AMZN", "META", "AMD", "PLTR", "ASTS", "SOXL", "TQQQ", "MSTR", "AVGO", "QCOM", "INTC"]
+        my_bar = st.progress(0, text="AI 모델 데이터 불러오는 중...")
+        pred = []
         
-        try:
-            data = yf.download(scan_list, period="1mo", progress=False)
-            closes = data['Close']
-            pred = []
+        for i, t in enumerate(scan_list):
+            try:
+                h = get_safe_history(t, "3mo")
+                if h is not None and len(h) > 20:
+                    curr_p = float(h['Close'].iloc[-1])
+                    rsi = float(calculate_rsi(h).iloc[-1])
+                    exp_return = predict_5d_return(curr_p, h, rsi)
+                    pred.append({"Ticker": t, "현재가($)": round(curr_p, 2), "예상 수익률(%)": round(exp_return, 2)})
+            except: 
+                pass
             
-            for i, t in enumerate(scan_list):
-                if t in closes.columns:
-                    s = closes[t].dropna()
-                    if len(s) > 20:
-                        curr_p = float(s.iloc[-1])
-                        temp_df = pd.DataFrame({'Close': s})
-                        rsi = float(calculate_rsi(temp_df).iloc[-1])
-                        exp_return = predict_5d_return(curr_p, temp_df, rsi)
-                        pred.append({"Ticker": t, "현재가($)": round(curr_p, 2), "예상 수익률(%)": round(exp_return, 2)})
-                        
-                my_bar.progress(50 + int(((i + 1) / len(scan_list)) * 50), text=f"🧠 AI가 {t} 패턴 학습 중...")
-                
-            if pred:
-                st.success("✅ AI 예측 완료!")
-                df = pd.DataFrame(pred).sort_values(by="예상 수익률(%)", ascending=False).reset_index(drop=True)
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.success("📈 **상승 기대 TOP 5**")
-                    st.dataframe(df.head(5).style.applymap(lambda x: "color: #ff4b4b; font-weight: bold;", subset=['예상 수익률(%)']), use_container_width=True)
-                with c2:
-                    st.error("📉 **하락 주의 WORST 5**")
-                    st.dataframe(df.tail(5).sort_values(by="예상 수익률(%)", ascending=True).reset_index(drop=True).style.applymap(lambda x: "color: #0068c9; font-weight: bold;", subset=['예상 수익률(%)']), use_container_width=True)
-            else:
-                st.error("데이터 로딩에 실패했습니다.")
-        except Exception as e:
-            st.error("서버 차단으로 데이터를 가져오지 못했습니다. 잠시 후 시도해주세요.")
+            my_bar.progress(int(((i + 1) / len(scan_list)) * 100), text=f"🧠 AI가 {t}의 패턴을 학습 중입니다... ({i+1}/{len(scan_list)})")
+            time.sleep(0.1)
+            
+        if pred:
+            st.success("✅ AI 예측 완료!")
+            df = pd.DataFrame(pred).sort_values(by="예상 수익률(%)", ascending=False).reset_index(drop=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.success("📈 **상승 기대 TOP 5**")
+                st.dataframe(df.head(5).style.applymap(lambda x: "color: #ff4b4b; font-weight: bold;", subset=['예상 수익률(%)']), use_container_width=True)
+            with c2:
+                st.error("📉 **하락 주의 WORST 5**")
+                st.dataframe(df.tail(5).sort_values(by="예상 수익률(%)", ascending=True).reset_index(drop=True).style.applymap(lambda x: "color: #0068c9; font-weight: bold;", subset=['예상 수익률(%)']), use_container_width=True)
+        else:
+            st.error("데이터 로딩에 실패했습니다.")
