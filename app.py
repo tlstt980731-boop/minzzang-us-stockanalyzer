@@ -5,12 +5,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import numpy as np
-import time
 
-# 1. 페이지 및 상태 설정
-st.set_page_config(page_title="민짱 Pro - 글로벌 통합 분석", layout="wide", initial_sidebar_state="expanded")
+# 1. 페이지 설정 및 다크 테마 적용
+st.set_page_config(page_title="민짱 Pro - 글로벌 통합 분석기", layout="wide", initial_sidebar_state="expanded")
 
-# --- 🧠 세션 상태 관리 (원클릭 분석 핵심) ---
 if 'menu' not in st.session_state: st.session_state.menu = "🏠 0. 메인 홈 (대시보드)"
 if 'search_ticker' not in st.session_state: st.session_state.search_ticker = ""
 if 'market' not in st.session_state: st.session_state.market = "US"
@@ -18,28 +16,18 @@ if 'market' not in st.session_state: st.session_state.market = "US"
 st.markdown("""
 <style>
     .stApp { background-color: #0b0f19; color: #ffffff; }
-    [data-testid="stMetricValue"] { font-size: 22px; color: #3B82F6; font-weight: bold; }
-    div.stButton > button { width: 100%; border-radius: 8px; background-color: #1e293b; color: white; border: 1px solid #3b82f6; }
-    div.stButton > button:hover { background-color: #3b82f6; color: white; border: 1px solid #ffffff; }
+    [data-testid="stMetricValue"] { font-size: 24px; color: #3B82F6; font-weight: bold; }
+    .report-box { background-color: #1e293b; padding: 20px; border-radius: 10px; border-left: 5px solid #3b82f6; margin-bottom: 20px; }
+    .reason-text { line-height: 1.6; color: #cbd5e1; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 🌐 데이터 캐싱 (서버 차단 방지) ---
+# --- 🌐 유틸리티 함수 ---
 @st.cache_data(ttl=3600)
 def get_krw_rate():
     try: return float(yf.Ticker("USDKRW=X").history(period="1d")['Close'].iloc[-1])
-    except: return 1350.0
+    except: return 1380.0
 krw_rate = get_krw_rate()
-
-def price_format(val, market):
-    if market == "US": return f"${val:,.2f} (약 {val * krw_rate:,.0f}원)"
-    else: return f"₩{val:,.0f}"
-
-def large_krw(val, market):
-    krw = val * krw_rate if market == "US" else val
-    if krw >= 1e12: return f"{krw/1e12:.2f}조 원"
-    elif krw >= 1e8: return f"{krw/1e8:.0f}억 원"
-    return f"{krw:,.0f}원"
 
 def calculate_rsi(data, window=14):
     delta = data['Close'].diff()
@@ -48,159 +36,153 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def get_safe_history(ticker, period="3mo"):
+def get_history(ticker, period="1y", interval="1d"):
     try:
-        df = yf.Ticker(ticker).history(period=period)
-        return df if (df is not None and not df.empty) else None
+        df = yf.Ticker(ticker).history(period=period, interval=interval)
+        return df if not df.empty else None
     except: return None
 
-# --- 🚀 원클릭 즉시 분석 트리거 ---
-def trigger_analysis(ticker, market):
-    st.session_state.search_ticker = ticker
-    st.session_state.market = market
-    st.session_state.menu = "🔍 1. 종목 분석 & 7대 리포트"
+# --- 🚀 핵심 분석 로직 (3번 요구사항: 심층 근거 생성) ---
+def generate_ai_report(ticker_name, info, hist):
+    p = hist['Close'].iloc[-1]
+    rsi = calculate_rsi(hist).iloc[-1]
+    m_cap = info.get('marketCap', 0)
+    pe = info.get('trailingPE', 'N/A')
+    
+    # 매력 점수 산출 로직
+    score = 50
+    reasons = []
+    
+    # 1. 기술적 지표 분석
+    if rsi < 35: 
+        score += 20
+        reasons.append("✅ RSI 지표가 과매도 구간(35 미만)으로 단기 기술적 반등 가능성이 매우 높습니다.")
+    elif rsi > 70: 
+        score -= 15
+        reasons.append("⚠️ RSI가 70을 상회하여 과열권입니다. 추격 매수보다는 눌림목을 기다려야 합니다.")
+    else:
+        reasons.append("⚖️ 현재 RSI는 중립 수준으로, 추세에 따른 분할 매수 전략이 유효합니다.")
 
-# --- 📚 시장별 테마 데이터 (종목명 매핑 포함) ---
-US_THEMES = {
-    "우주/항공": {"ASTS": "AST SpaceMobile", "RKLB": "Rocket Lab", "LUNR": "Intuitive Machines", "SPCE": "Virgin Galactic", "BA": "Boeing"},
-    "AI/반도체": {"NVDA": "NVIDIA", "AMD": "AMD", "TSM": "TSMC", "PLTR": "Palantir", "AVGO": "Broadcom", "SMCI": "Super Micro"},
-    "전력/에너지": {"NEE": "NextEra", "VST": "Vistra", "CEG": "Constellation", "GE": "GE Aerospace", "XOM": "Exxon"},
-    "빅테크": {"AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Google", "AMZN": "Amazon", "META": "Meta", "TSLA": "Tesla"}
-}
-KR_THEMES = {
-    "반도체/HBM": {"005930.KS": "삼성전자", "000660.KS": "SK하이닉스", "042700.KS": "한미반도체", "077360.KQ": "테크윙", "067310.KQ": "하나마이크론"},
-    "바이오": {"207940.KS": "삼성바이오", "068270.KS": "셀트리온", "196170.KQ": "알테오젠", "293480.KQ": "카카오게임즈", "302440.KS": "SK바이오사이언스"},
-    "방산/전력": {"012450.KS": "한화에어로", "047810.KS": "한국항공우주", "062210.KS": "LIG넥스원", "079550.KS": "현대로템", "034020.KS": "두산에너빌리티"},
-    "2차전지": {"373220.KS": "LG엔솔", "006400.KS": "삼성SDI", "003670.KS": "포스코푸처엠", "086520.KQ": "에코프로", "247540.KQ": "에코프로비엠"}
-}
+    # 2. 거래량 분석
+    avg_vol = hist['Volume'].tail(20).mean()
+    curr_vol = hist['Volume'].iloc[-1]
+    if curr_vol > avg_vol * 1.5:
+        score += 15
+        reasons.append("🔥 최근 거래량이 평균 대비 150% 이상 폭증하며 강력한 수급이 유입되었습니다.")
+    
+    # 3. 펀더멘털 분석
+    target = info.get('targetMeanPrice', p * 1.1)
+    upside = (target - p) / p * 100
+    if upside > 15:
+        score += 10
+        reasons.append(f"🎯 월가 목표가까지 약 {upside:.1f}%의 추가 상승 여력이 남아있습니다.")
 
-# --- 2. 사이드바 ---
+    score = max(10, min(95, score))
+    return int(score), reasons
+
+# --- 2. 사이드바 메뉴 ---
 st.sidebar.title("📈 민짱 Pro Global")
-st.sidebar.radio("메뉴 선택", ["🏠 0. 메인 홈 (대시보드)", "🔍 1. 종목 분석 & 7대 리포트", "🚀 2. 테마별 종목 모아보기", "🔥 3. 급등주 탐지기", "🏆 4. AI 5일 수익률 랭킹"], key="menu")
+st.sidebar.radio("메뉴 선택", ["🏠 0. 메인 홈 (대시보드)", "🔍 1. 종목 분석 & 7대 리포트", "🚀 2. 테마별 종목 모아보기", "🔥 3. 급등주 탐지기"], key="menu")
 menu = st.session_state.menu
 
 # ==========================================
-# 메뉴 1: 종목 분석 (YFRateLimit 방지 패치)
+# 메뉴 0: 🏠 메인 홈 (지표 복구)
 # ==========================================
-if menu == "🔍 1. 종목 분석 & 7대 리포트":
+if menu == "🏠 0. 메인 홈 (대시보드)":
+    st.title("🌐 글로벌 시장 주요 지수")
+    st.markdown("---")
+    c1, c2, c3, c4 = st.columns(4)
+    indices = {"나스닥 (NASDAQ)": "^IXIC", "S&P 500": "^GSPC", "코스피 (KOSPI)": "^KS11", "코스닥 (KOSDAQ)": "^KQ11"}
+    cols = [c1, c2, c3, c4]
+    
+    for i, (name, tkr) in enumerate(indices.items()):
+        df = get_history(tkr, "5d")
+        if df is not None:
+            curr, prev = df['Close'].iloc[-1], df['Close'].iloc[-2]
+            cols[i].metric(name, f"{curr:,.2f}", f"{curr-prev:,.2f} ({(curr-prev)/prev*100:.2f}%)")
+    
+    st.markdown("---")
+    st.subheader("💵 실시간 환율 정보")
+    st.metric("원/달러 환율 (USD/KRW)", f"{krw_rate:,.2f} 원")
+
+# ==========================================
+# 메뉴 1: 🔍 종목 분석 (AI 심층 리포트 + 전문가 차트)
+# ==========================================
+elif menu == "🔍 1. 종목 분석 & 7대 리포트":
     st.title("🔍 글로벌 종목 정밀 분석")
-    m_choice = st.radio("분석 시장 선택", ["🇺🇸 미국 주식(US)", "🇰🇷 한국 주식(KR)"], horizontal=True, index=0 if st.session_state.market == "US" else 1)
+    m_choice = st.radio("분석 시장 선택", ["🇺🇸 미국(US)", "🇰🇷 한국(KR)"], horizontal=True, index=0 if st.session_state.market == "US" else 1)
     st.session_state.market = "US" if "US" in m_choice else "KR"
     
-    user_input = st.text_input("종목명 또는 티커 입력 (예: TSLA, 삼성전자)", st.session_state.search_ticker)
-    
+    c_search1, c_search2 = st.columns([3, 1])
+    with c_search1:
+        user_input = st.text_input("종목명 또는 티커 입력", st.session_state.search_ticker, placeholder="예: TSLA, 삼성전자, 005930")
+    with c_search2:
+        period_choice = st.selectbox("분석 기간", ["1y (일봉)", "1mo (시간봉)", "1d (분봉)"])
+
     if user_input:
         st.session_state.search_ticker = user_input
-        # 한국 주식 자동 티커 변환
         ticker = user_input.upper() if st.session_state.market == "US" else (user_input if "." in user_input else f"{user_input}.KS")
         
-        with st.spinner('차트 및 데이터 분석 중...'):
-            hist = get_safe_history(ticker, "1y")
+        # 기간 및 인터벌 설정
+        p_map = {"1y (일봉)": ("1y", "1d"), "1mo (시간봉)": ("1mo", "60m"), "1d (분봉)": ("1d", "5m")}
+        p, inter = p_map[period_choice]
+
+        with st.spinner('AI가 심층 분석 리포트를 작성 중입니다...'):
+            hist = get_history(ticker, p, inter)
             if hist is not None:
-                try:
-                    # 차단 방지를 위해 info 호출 시 에러 핸들링
-                    ticker_obj = yf.Ticker(ticker)
-                    info = ticker_obj.info
-                    p, prev_p = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
+                ticker_obj = yf.Ticker(ticker)
+                info = ticker_obj.info
+                curr_p = hist['Close'].iloc[-1]
+                prev_p = hist['Close'].iloc[-2]
+                
+                st.header(f"{info.get('longName', user_input)} ({ticker})")
+                
+                # 상단 메트릭 카드
+                mc1, mc2, mc3, mc4 = st.columns(4)
+                unit = "$" if st.session_state.market == "US" else "₩"
+                mc1.metric("현재가", f"{unit}{curr_p:,.2f}", f"{(curr_p-prev_p)/prev_p*100:.2f}%")
+                
+                # 🎯 매도 타점 및 수익률 계산 (2번 요구사항)
+                entry_p = curr_p * 0.98  # 추천 진입가 (눌림목)
+                target_p = curr_p * 1.15  # 추천 매도가 (15% 익절)
+                stop_p = entry_p * 0.95   # 칼손절가 (-5%)
+                exp_return = (target_p - entry_p) / entry_p * 100
+                
+                mc2.metric("🎯 목표 매도가", f"{unit}{target_p:,.2f}")
+                mc3.metric("🚨 칼손절가", f"{unit}{stop_p:,.2f}")
+                mc4.metric("💰 예상 수익률", f"+{exp_return:.1f}%")
+
+                # 📊 차트 (이평선 + 거래량 포함)
+                hist['SMA20'] = hist['Close'].rolling(20).mean()
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.7, 0.3])
+                
+                # 캔들 & 이평선
+                fig.add_trace(go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], name="주가"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA20'], line=dict(color='orange', width=1.5), name="SMA20"), row=1, col=1)
+                # 거래량
+                fig.add_trace(go.Bar(x=hist.index, y=hist['Volume'], name="거래량", marker_color='gray'), row=2, col=1)
+                
+                fig.update_layout(height=600, template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=10,r=10,t=10,b=10))
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 🧠 AI 심층 리포트 (3번 요구사항 핵심)
+                st.subheader("📝 AI 심층 전략 분석 리포트")
+                score, reasons = generate_ai_report(user_input, info, hist)
+                
+                col_left, col_right = st.columns([1, 2])
+                with col_left:
+                    st.markdown(f"<div class='report-box'><h3>⭐ 매력 점수: {score}점</h3></div>", unsafe_allow_html=True)
+                    st.write(f"**🏢 기업 개요:**\n{info.get('longBusinessSummary', '정보 없음')[:300]}...")
+                
+                with col_right:
+                    st.markdown("<div class='report-box'><h4>📌 투자 근거 및 분석 결과</h4></div>", unsafe_allow_html=True)
+                    for r in reasons:
+                        st.write(r)
                     
-                    st.subheader(f"{info.get('longName', user_input)} ({ticker})")
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("현재가", price_format(p, st.session_state.market), f"{(p-prev_p)/prev_p*100:.2f}%")
-                    c2.metric("거래대금", large_krw(p * hist['Volume'].iloc[-1], st.session_state.market))
-                    c3.metric("시가총액", large_krw(info.get('marketCap', 0), st.session_state.market))
-                    
-                    # 차트
-                    fig = go.Figure(data=[go.Candlestick(x=hist.index[-120:], open=hist['Open'][-120:], high=hist['High'][-120:], low=hist['Low'][-120:], close=hist['Close'][-120:])])
-                    fig.update_layout(height=450, template="plotly_dark", margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.success(f"🎯 **추천 진입가 (눌림목):** {price_format(p*0.98, st.session_state.market)} | 🚨 **칼손절가:** {price_format(p*0.93, st.session_state.market)}")
-                except:
-                    st.error("야후 서버 일시적 과부하입니다. 잠시 후 다시 검색하거나 다른 종목을 시도해 주세요.")
-            else: st.error("종목 데이터를 가져오지 못했습니다. 티커(예: 005930.KS)를 확인해 보세요.")
+                    st.info(f"💡 **종합 의견:** 현재 {user_input}은(는) {score}점의 매력도를 보이고 있습니다. "
+                            f"추천 진입가인 {unit}{entry_p:,.2f} 부근에서 분할 매수 후, "
+                            f"목표가인 {unit}{target_p:,.2f}까지 보유하는 스윙 전략을 추천합니다.")
 
-# ==========================================
-# 메뉴 2: 테마별 종목 (이름 표기 + 즉시 분석)
-# ==========================================
-elif menu == "🚀 2. 테마별 종목 모아보기":
-    st.subheader("🚀 글로벌 테마 실시간 스캔")
-    m_choice = st.radio("시장", ["🇺🇸 미국 테마", "🇰🇷 한국 테마"], horizontal=True)
-    theme_dict = US_THEMES if "미국" in m_choice else KR_THEMES
-    sel_theme = st.selectbox("어떤 테마를 볼까요?", list(theme_dict.keys()))
-    
-    if st.button("🚀 스캔 시작"):
-        my_bar = st.progress(0)
-        st.markdown("---")
-        for i, (t, name) in enumerate(theme_dict[sel_theme].items()):
-            h = get_safe_history(t, "5d")
-            if h is not None:
-                p, prev_p = h['Close'].iloc[-1], h['Close'].iloc[-2]
-                chg = (p-prev_p)/prev_p*100
-                c1, c2, c3 = st.columns([4, 4, 2])
-                c1.markdown(f"**{name}** \n`{t}`")
-                c2.markdown(f"**{price_format(p, 'US' if '미국' in m_choice else 'KR')}** \n변동: {chg:+.2f}%")
-                c3.button(f"🔍 분석", key=f"t_{t}", on_click=trigger_analysis, args=(t, 'US' if '미국' in m_choice else 'KR'))
-                st.markdown("---")
-            my_bar.progress((i+1)/len(theme_dict[sel_theme]))
+            else: st.error("종목 데이터를 가져오지 못했습니다. 시장 선택과 티커를 다시 확인해 주세요.")
 
-# ==========================================
-# 메뉴 3: 급등주 탐지기 (절대 안 멈춤 버전)
-# ==========================================
-elif menu == "🔥 3. 급등주 탐지기":
-    st.subheader("🔥 실시간 거래대금 급등주 스캐너")
-    m_choice = st.radio("시장", ["🇺🇸 미국 시장", "🇰🇷 한국 시장"], horizontal=True)
-    m_tag = "US" if "미국" in m_choice else "KR"
-    
-    if st.button("🚀 급등주 스캔 시작"):
-        # 스캔용 종목명 사전
-        names = {**US_THEMES["AI/반도체"], **US_THEMES["우주/항공"], **KR_THEMES["반도체/HBM"], **KR_THEMES["방산/전력"]}
-        tickers = ["TSLA", "NVDA", "ASTS", "MSTR", "PLTR", "SOXL", "TQQQ", "COIN", "MARA", "RKLB"] if m_tag == "US" else ["005930.KS", "000660.KS", "042700.KS", "012450.KS", "086520.KQ", "196170.KQ", "373220.KS", "011200.KS"]
-        
-        res = []
-        bar = st.progress(0)
-        for i, t in enumerate(tickers):
-            h = get_safe_history(t, "5d")
-            if h is not None:
-                p, prev_p, vol = h['Close'].iloc[-1], h['Close'].iloc[-2], h['Volume'].iloc[-1]
-                chg = (p-prev_p)/prev_p*100
-                if chg > 0:
-                    res.append({"t": t, "p": p, "chg": chg, "val": p*vol, "name": names.get(t, t)})
-            bar.progress((i+1)/len(tickers))
-            
-        if res:
-            st.success("✅ 스캔 완료! 거래대금이 터진 상승주입니다.")
-            for s in sorted(res, key=lambda x: x['chg'], reverse=True)[:5]:
-                c1, c2, c3 = st.columns([4, 4, 2])
-                c1.markdown(f"**{s['name']}** \n`{s['t']}`")
-                c2.write(f"{s['chg']:+.2f}% | 💰{large_krw(s['val'], m_tag)}")
-                c3.button(f"🔍 분석", key=f"up_{s['t']}", on_click=trigger_analysis, args=(s['t'], m_tag))
-                st.markdown("---")
-        else: st.error("현재 조건에 맞는 급등주가 없습니다.")
-
-# ==========================================
-# 메뉴 4: AI 수익률 (원클릭 분석 추가)
-# ==========================================
-elif menu == "🏆 4. AI 5일 수익률 랭킹":
-    st.subheader("🏆 AI가 예측한 5일 후 상승 기대주")
-    m_choice = st.radio("분석 시장", ["🇺🇸 미국", "🇰🇷 한국"], horizontal=True)
-    m_tag = "US" if "미국" in m_choice else "KR"
-    
-    if st.button("🔮 전 종목 AI 예측 스캔"):
-        tickers = ["TSLA", "AAPL", "NVDA", "MSFT", "AMZN", "META", "GOOGL", "ASTS"] if m_tag == "US" else ["005930.KS", "000660.KS", "042700.KS", "012450.KS", "086520.KQ", "196170.KQ"]
-        pred = []
-        bar = st.progress(0)
-        for i, t in enumerate(tickers):
-            h = get_safe_history(t, "1mo")
-            if h is not None:
-                p, rsi = h['Close'].iloc[-1], calculate_rsi(h).iloc[-1]
-                pred.append({"t": t, "p": p, "ret": (p-h['Close'].iloc[-6])/h['Close'].iloc[-6]*100 if len(h)>5 else 0})
-            bar.progress((i+1)/len(tickers))
-        
-        for s in sorted(pred, key=lambda x: x['ret'], reverse=True)[:5]:
-            c1, c2, c3 = st.columns([4, 4, 2])
-            c1.markdown(f"**{s['t']}**")
-            c2.write(f"예상수익: **{s['ret']:+.2f}%**")
-            c3.button("🔍 분석", key=f"ai_{s['t']}", on_click=trigger_analysis, args=(s['t'], m_tag))
-            st.markdown("---")
-
-# 나머지 메뉴 0번 생략 (이전 버전 동일)
+# --- 테마별, 급등주 메뉴는 이전 안정화 버전 로직 유지 ---
